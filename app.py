@@ -385,7 +385,10 @@ def split_revenue(amounts: dict, channel_rate: float) -> dict:
     vgen_gross_before_imb = cp
     vgen_imb_cost = imb
     vgen_before_channel = vgen_gross_before_imb + vgen_imb_cost
-    channel_fee = max(vgen_before_channel, 0) * channel_rate
+    # 채널영업 수수료는 브이젠의 CP 총수익 기준으로 계산한다.
+    # IMB/IMBP는 브이젠이 별도 부담하는 리스크이므로,
+    # 채널 수수료 산정 기준에서 제외해야 수수료가 명확히 반영된다.
+    channel_fee = max(vgen_gross_before_imb, 0) * channel_rate
     vgen_after_channel = vgen_before_channel - channel_fee
 
     return {
@@ -829,6 +832,38 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# 내부용 핵심 수익은 사업주 수익 카드 바로 아래에서 먼저 확인한다.
+if is_internal:
+    st.subheader("내부용: 브이젠 총수익 상세")
+    st.markdown(
+        f"""
+<div class="blue-box">
+  <b>내부 배분 기준:</b> <span class="badge badge-blue">CP 브이젠 귀속</span> <span class="badge badge-orange">IMB/IMBP 브이젠 부담</span> <span class="badge badge-green">MEP/MAP/MWP 사업주 귀속</span><br>
+  채널영업 수수료는 브이젠 CP 총수익의 <b>{channel_rate_pct}%</b>로 계산합니다.
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+    it1, it2, it3, it4 = st.columns(4)
+    with it1:
+        st.markdown(f"""<div class="card"><div class="label">브이젠 CP 총수익</div><div class="big">{fmt_manwon(vgen_cp_gross_y1)}</div><div class="small">CP 전체 브이젠 귀속</div></div>""", unsafe_allow_html=True)
+    with it2:
+        st.markdown(f"""<div class="card"><div class="label">브이젠 IMB 부담</div><div class="red">{fmt_manwon(vgen_imb_cost_y1)}</div><div class="small">IMB/IMBP 브이젠 부담</div></div>""", unsafe_allow_html=True)
+    with it3:
+        st.markdown(f"""<div class="card"><div class="label">채널영업 수수료</div><div class="big">{fmt_manwon(channel_fee_y1)}</div><div class="small">CP 총수익의 {channel_rate_pct}%</div></div>""", unsafe_allow_html=True)
+    with it4:
+        st.markdown(f"""<div class="card"><div class="label">브이젠 최종 순수익</div><div class="big">{fmt_manwon(vgen_net_y1)}</div><div class="small">CP + IMB - 채널수수료 + 선택수수료</div></div>""", unsafe_allow_html=True)
+
+    it5, it6, it7, it8 = st.columns(4)
+    with it5:
+        st.markdown(f"""<div class="card"><div class="label">채널 차감 전 브이젠 수익</div><div class="big">{fmt_manwon(vgen_before_channel_y1)}</div><div class="small">CP + IMB 부담 반영</div></div>""", unsafe_allow_html=True)
+    with it6:
+        st.markdown(f"""<div class="card"><div class="label">사업주 수수료</div><div class="big">{fmt_manwon(owner_service_fee_y1)}</div><div class="small">선택 입력값 기준</div></div>""", unsafe_allow_html=True)
+    with it7:
+        st.markdown(f"""<div class="card"><div class="label">{years}년 누적 브이젠 순수익</div><div class="big">{fmt_manwon(sum_vgen)}</div><div class="small">채널수수료 차감 후</div></div>""", unsafe_allow_html=True)
+    with it8:
+        st.markdown(f"""<div class="card"><div class="label">{years}년 누적 채널 수수료</div><div class="big">{fmt_manwon(sum_channel)}</div><div class="small">채널 파트너 지급액</div></div>""", unsafe_allow_html=True)
+
 # Channel summary for channel mode only
 if is_channel:
     st.subheader("영업채널용 요약")
@@ -923,7 +958,7 @@ if is_internal:
         f"""
 <div class="blue-box">
   <b>내부 배분 기준:</b> <span class="badge badge-blue">CP 브이젠 귀속</span> <span class="badge badge-orange">IMB/IMBP 브이젠 부담</span> <span class="badge badge-green">MEP/MAP/MWP 사업주 귀속</span><br>
-  채널영업 수수료는 브이젠 채널 차감 전 수익의 <b>{channel_rate_pct}%</b>로 계산합니다.
+  채널영업 수수료는 브이젠 CP 총수익의 <b>{channel_rate_pct}%</b>로 계산합니다.
 </div>
 """,
         unsafe_allow_html=True,
@@ -1097,7 +1132,7 @@ if is_internal:
 - **MAP (Make-whole Additional Payment, 출력제어 보상)**: 사업주 귀속으로 계산합니다.
 - **MWP (Make-whole Payment, 급전지시 비용보전)**: 사업주 귀속으로 계산합니다.
 - **IMB/IMBP (Imbalance Penalty, 예측오차 페널티)**: 브이젠 부담으로 계산합니다.
-- **채널영업 수수료**: 브이젠 채널 차감 전 수익에서 선택한 비율만큼 지급하는 것으로 계산합니다.
+- **채널영업 수수료**: 브이젠 CP 총수익에서 선택한 비율만큼 지급하는 것으로 계산합니다.
 - **브이젠 최종 순수익**: CP 총수익 + IMB 부담 - 채널영업 수수료 + 선택 입력한 사업주 수수료입니다.
             """
         )
