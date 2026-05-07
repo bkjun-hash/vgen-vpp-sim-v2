@@ -733,7 +733,14 @@ item_df = pd.DataFrame({
 col_i1, col_i2 = st.columns([1.2, 1])
 with col_i1:
     fig_items = go.Figure()
-    fig_items.add_trace(go.Bar(x=item_df["항목"], y=item_df["연간 효과(만원)"], text=[f"{v:,.0f}만원" for v in item_df["연간 효과(만원)"], textposition="outside"))
+    fig_items.add_trace(
+        go.Bar(
+            x=item_df["항목"],
+            y=item_df["연간 효과(만원)"],
+            text=[f"{v:,.0f}만원" for v in item_df["연간 효과(만원)"]],
+            textposition="outside",
+        )
+    )
     fig_items.update_layout(height=440, yaxis_title="만원/년", margin=dict(l=20, r=20, t=30, b=120))
     st.plotly_chart(fig_items, use_container_width=True)
 with col_i2:
