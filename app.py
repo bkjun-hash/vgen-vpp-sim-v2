@@ -272,13 +272,19 @@ def init_defaults():
 
 
 def apply_case(case_name: str):
+    """선택한 케이스 값을 입력 위젯에 반영한다.
+
+    주의: selected_case는 이미 selectbox 위젯으로 생성된 key이므로,
+    버튼 클릭 후 같은 실행 흐름에서 st.session_state['selected_case']를 다시 쓰면
+    StreamlitAPIException이 발생한다. 따라서 selected_case 자체는 수정하지 않고,
+    나머지 입력값만 갱신한다.
+    """
     preset = CASE_PRESETS.get(case_name, {})
     if not preset:
-        st.session_state["selected_case"] = "직접 입력"
         return
-    st.session_state["selected_case"] = case_name
     for key, value in preset.items():
-        st.session_state[key] = value
+        if key != "selected_case":
+            st.session_state[key] = value
     st.session_state["degradation_pct"] = st.session_state.get("degradation_pct", 0.5)
     st.session_state["years"] = st.session_state.get("years", DEFAULT_PROJECT_YEARS)
 
@@ -546,8 +552,13 @@ with st.sidebar:
         op = OPERATION_LEVELS[operation]
         st.caption(op["desc"])
 
+    if is_channel and st.session_state.get("channel_preset", "채널 없음") == "채널 없음":
+        # 영업채널용은 기본 수수료율을 20%로 설정한다.
+        # 이후 사용자가 30%, 50%, 직접 입력 등으로 변경 가능하다.
+        st.session_state["channel_preset"] = "5MW 모집 채널: 브이젠 수익의 20%"
+
     if is_internal or is_channel:
-        with st.expander("채널/배분 설정", expanded=is_internal):
+        with st.expander("채널/배분 설정", expanded=True if is_channel else is_internal):
             channel_preset = st.selectbox("채널영업 수수료율", list(CHANNEL_PRESETS.keys()), key="channel_preset")
             if CHANNEL_PRESETS[channel_preset] is None:
                 channel_rate_pct = st.slider("직접 입력 수수료율(%)", 0, 80, key="custom_channel_rate_pct")
