@@ -520,19 +520,19 @@ with st.sidebar:
 
     st.caption("케이스 적용 후에도 아래 상세 입력에서 값을 직접 수정할 수 있습니다.")
 
-    with st.expander("기본 설정", expanded=True):
+    with st.expander("기본 설정", expanded=False):
         region = st.selectbox("지역", list(REGION_CONFIG.keys()), key="region")
         conf = REGION_CONFIG[region]
         calc_method = st.radio("계산 방식", CALC_METHODS, key="calc_method")
         scenario = st.selectbox("수익 시나리오", list(SCENARIOS.keys()), key="scenario")
         years = st.slider("분석 기간(년)", 1, 30, key="years")
 
-    with st.expander("발전소 정보", expanded=True):
+    with st.expander("발전소 정보", expanded=False):
         cap_mw = st.number_input("설비 용량(MW)", min_value=0.01, step=0.1, key="cap_mw")
         gen_time = st.slider("하루 평균 발전시간", 2.0, 5.5, 0.1, key="gen_time")
         degradation_pct = st.number_input("연간 발전효율 감소율(%)", min_value=0.0, max_value=3.0, step=0.1, key="degradation_pct")
 
-    with st.expander("기존 판매단가", expanded=True):
+    with st.expander("기존 판매단가", expanded=False):
         fixed_total_price = st.number_input("기존 총 판매단가(SMP+REC, 원/kWh)", min_value=0.0, step=1.0, key="fixed_total_price")
         base_smp_price = st.number_input("기존 SMP 상당 단가(원/kWh)", min_value=0.0, step=1.0, key="base_smp_price")
         rec_price = max(fixed_total_price - base_smp_price, 0.0)
@@ -558,7 +558,7 @@ with st.sidebar:
         st.session_state["channel_preset"] = "5MW 모집 채널: 브이젠 수익의 20%"
 
     if is_internal or is_channel:
-        with st.expander("채널/배분 설정", expanded=True if is_channel else is_internal):
+        with st.expander("채널/배분 설정", expanded=False):
             channel_preset = st.selectbox("채널영업 수수료율", list(CHANNEL_PRESETS.keys()), key="channel_preset")
             if CHANNEL_PRESETS[channel_preset] is None:
                 channel_rate_pct = st.slider("직접 입력 수수료율(%)", 0, 80, key="custom_channel_rate_pct")
