@@ -7,23 +7,23 @@ import streamlit as st
 from fpdf import FPDF
 
 # =========================================================
-# V-GEN VPP 수익 계산기 v3.1
+# V-GEN VPP 수익 계산기 v3.2
 # ---------------------------------------------------------
 # 고객용
 # - 기존 수익 vs VPP 참여 후 사업주 수익 중심
-# - 채널영업 수수료, 브이젠 수익, 내부 배분 구조 숨김
+# - 브이젠 수익, 채널 수수료, 내부 배분 구조 숨김
 #
 # 내부용
 # - 비밀번호 입력 후 접근, 기본 비밀번호: 1234
-# - 사업주 / 브이젠 / 채널 수익 배분 표시
+# - 브이젠 총수익을 상세히 표시
 # - CP: 브이젠 귀속
 # - IMB/IMBP: 브이젠 부담
 # - MEP/MAP/MWP: 사업주 귀속
-# - 채널영업 수수료: 브이젠 수익의 20% / 30% / 50% 등 선택
+# - 채널영업 수수료: 브이젠 수익에서 선택 비율 지급
 # =========================================================
 
 st.set_page_config(
-    page_title="V-GEN VPP 수익 계산기 v3.1",
+    page_title="V-GEN VPP 수익 계산기 v3.2",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -33,6 +33,9 @@ FONT_PATH = os.path.join(os.getcwd(), FONT_FILENAME)
 INTERNAL_PASSWORD = "1234"
 DEFAULT_PROJECT_YEARS = 20
 
+# ---------------------------------------------------------
+# 기본 설정값
+# ---------------------------------------------------------
 REGION_CONFIG = {
     "호남/육지 입찰제 확대 모델": {
         "cp": 11.0,
@@ -83,6 +86,9 @@ TERM_LABELS = {
     "imb": "IMB/IMBP (Imbalance Penalty, 예측오차 페널티)",
 }
 
+# ---------------------------------------------------------
+# CSS
+# ---------------------------------------------------------
 st.markdown(
     """
 <style>
@@ -113,6 +119,7 @@ st.markdown(
 .green-box {border-left: 6px solid #16a34a; background: #f0fdf4; border-radius: 14px; padding: 14px 18px; margin: 12px 0;}
 .blue-box {border-left: 6px solid #2563eb; background: #eff6ff; border-radius: 14px; padding: 14px 18px; margin: 12px 0;}
 .orange-box {border-left: 6px solid #f59e0b; background: #fffbeb; border-radius: 14px; padding: 14px 18px; margin: 12px 0;}
+.red-box {border-left: 6px solid #dc2626; background: #fef2f2; border-radius: 14px; padding: 14px 18px; margin: 12px 0;}
 .badge {display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 800; margin-right: 6px;}
 .badge-green {background: #dcfce7; color: #166534;}
 .badge-blue {background: #dbeafe; color: #1e40af;}
@@ -131,10 +138,6 @@ def won_to_manwon(value: float) -> float:
 
 def fmt_manwon(value: float, digits: int = 0) -> str:
     return f"{won_to_manwon(value):,.{digits}f} 만원"
-
-
-def fmt_won(value: float, digits: int = 0) -> str:
-    return f"{value:,.{digits}f} 원"
 
 
 def fmt_unit(value: float, digits: int = 2) -> str:
@@ -276,12 +279,16 @@ def split_revenue(amounts: dict, channel_rate: float) -> dict:
     # IMB/IMBP: 브이젠 부담
     # MEP/MAP/MWP: 사업주 귀속
     owner_vpp = mep + map_value + mwp
-    vgen_before_channel = cp + imb
+    vgen_gross_before_imb = cp
+    vgen_imb_cost = imb
+    vgen_before_channel = vgen_gross_before_imb + vgen_imb_cost
     channel_fee = max(vgen_before_channel, 0) * channel_rate
     vgen_after_channel = vgen_before_channel - channel_fee
 
     return {
         "owner_vpp": owner_vpp,
+        "vgen_gross_before_imb": vgen_gross_before_imb,
+        "vgen_imb_cost": vgen_imb_cost,
         "vgen_before_channel": vgen_before_channel,
         "channel_fee": channel_fee,
         "vgen_after_channel": vgen_after_channel,
@@ -313,8 +320,12 @@ def calc_cashflow(
     cum_owner_old = 0.0
     cum_owner_after = 0.0
     cum_owner_gain = 0.0
-    cum_vgen = 0.0
+    cum_vgen_gross_before_imb = 0.0
+    cum_vgen_imb_cost = 0.0
+    cum_vgen_before_channel = 0.0
+    cum_vgen_net = 0.0
     cum_channel = 0.0
+    cum_owner_service_fee = 0.0
 
     for year in range(1, years + 1):
         gen = annual_generation(cap_mw, gen_time, degradation, year)
@@ -337,11 +348,17 @@ def calc_cashflow(
         om = om_year1 * ((1 + om_escalation) ** (year - 1))
         owner_after_total = old_total + owner_vpp_net - om
 
+        vgen_total_net = split["vgen_after_channel"] + owner_service_fee
+
         cum_owner_old += old_total
         cum_owner_after += owner_after_total
         cum_owner_gain += owner_vpp_net
-        cum_vgen += split["vgen_after_channel"] + owner_service_fee
+        cum_vgen_gross_before_imb += split["vgen_gross_before_imb"]
+        cum_vgen_imb_cost += split["vgen_imb_cost"]
+        cum_vgen_before_channel += split["vgen_before_channel"]
+        cum_vgen_net += vgen_total_net
         cum_channel += split["channel_fee"]
+        cum_owner_service_fee += owner_service_fee
 
         rows.append({
             "연차": year,
@@ -354,15 +371,21 @@ def calc_cashflow(
             "사업주 수수료(원)": owner_service_fee,
             "사업주 VPP 순수익(원)": owner_vpp_net,
             "사업주 참여 후 총수익(원)": owner_after_total,
-            "브이젠 수익(CP+IMB)(원)": split["vgen_before_channel"],
+            "브이젠 CP 총수익(원)": split["vgen_gross_before_imb"],
+            "브이젠 IMB 부담(원)": split["vgen_imb_cost"],
+            "브이젠 채널 차감 전 수익(원)": split["vgen_before_channel"],
             "채널영업 수수료(원)": split["channel_fee"],
-            "브이젠 순수익(원)": split["vgen_after_channel"] + owner_service_fee,
+            "브이젠 순수익(원)": vgen_total_net,
             "O&M 비용(원)": om,
             "기존 누적수익(원)": cum_owner_old,
             "참여 후 누적수익(원)": cum_owner_after,
             "누적 사업주 추가수익(원)": cum_owner_gain,
-            "누적 브이젠 수익(원)": cum_vgen,
+            "누적 브이젠 CP 총수익(원)": cum_vgen_gross_before_imb,
+            "누적 브이젠 IMB 부담(원)": cum_vgen_imb_cost,
+            "누적 브이젠 채널 차감 전 수익(원)": cum_vgen_before_channel,
+            "누적 브이젠 순수익(원)": cum_vgen_net,
             "누적 채널 수수료(원)": cum_channel,
+            "누적 사업주 수수료(원)": cum_owner_service_fee,
             "잔여 구축비(원)": remaining_cost,
         })
     return pd.DataFrame(rows)
@@ -517,8 +540,11 @@ owner_vpp_net_y1 = owner_vpp_after_cost_y1 - owner_service_fee_y1
 owner_after_total_y1 = old_total_y1 + owner_vpp_net_y1 - om_year1
 owner_improvement_y1 = safe_div(owner_vpp_net_y1, old_total_y1) * 100
 
-vgen_net_y1 = split_y1["vgen_after_channel"] + owner_service_fee_y1
+vgen_cp_gross_y1 = split_y1["vgen_gross_before_imb"]
+vgen_imb_cost_y1 = split_y1["vgen_imb_cost"]
+vgen_before_channel_y1 = split_y1["vgen_before_channel"]
 channel_fee_y1 = split_y1["channel_fee"]
+vgen_net_y1 = split_y1["vgen_after_channel"] + owner_service_fee_y1
 
 normal_imb_amount = gen_y1 * imb_unit * OPERATION_LEVELS["일반 운영"]["imb_mult"]
 selected_imb_amount = effect_y1["amounts"].get(TERM_LABELS["imb"], 0.0)
@@ -546,8 +572,12 @@ cashflow_df = calc_cashflow(
 sum_old = cashflow_df["기존 사업주 총수익(원)"].sum()
 sum_owner_after = cashflow_df["사업주 참여 후 총수익(원)"].sum()
 sum_owner_gain = cashflow_df["사업주 VPP 순수익(원)"].sum()
+sum_vgen_cp_gross = cashflow_df["브이젠 CP 총수익(원)"].sum()
+sum_vgen_imb_cost = cashflow_df["브이젠 IMB 부담(원)"].sum()
+sum_vgen_before_channel = cashflow_df["브이젠 채널 차감 전 수익(원)"].sum()
 sum_vgen = cashflow_df["브이젠 순수익(원)"].sum()
 sum_channel = cashflow_df["채널영업 수수료(원)"].sum()
+sum_owner_service_fee = cashflow_df["사업주 수수료(원)"].sum()
 
 score = 0
 score += 30 if has_kpx_meter == "있음" else 10 if has_kpx_meter == "모름" else 0
@@ -599,16 +629,19 @@ def make_pdf() -> bytes | None:
     if is_internal:
         pdf.ln(6)
         pdf.set_font("NanumGothic", size=14)
-        pdf.cell(190, 9, "2. 내부 수익 배분", "B", ln=True)
+        pdf.cell(190, 9, "2. 내부 브이젠 수익", "B", ln=True)
         pdf.ln(4)
-        split_rows = [
-            ("사업주 귀속: MEP+MAP+MWP", fmt_manwon(owner_vpp_before_cost_y1)),
-            ("브이젠 귀속: CP + IMB 부담", fmt_manwon(split_y1["vgen_before_channel"])),
+        internal_rows = [
+            ("브이젠 CP 총수익", fmt_manwon(vgen_cp_gross_y1)),
+            ("브이젠 IMB 부담", fmt_manwon(vgen_imb_cost_y1)),
+            ("채널 차감 전 브이젠 수익", fmt_manwon(vgen_before_channel_y1)),
             ("채널영업 수수료", fmt_manwon(channel_fee_y1)),
+            ("사업주 수수료", fmt_manwon(owner_service_fee_y1)),
             ("브이젠 순수익", fmt_manwon(vgen_net_y1)),
+            (f"{years}년 누적 브이젠 순수익", fmt_manwon(sum_vgen)),
         ]
         pdf.set_font("NanumGothic", size=9)
-        for i, (k, v) in enumerate(split_rows):
+        for i, (k, v) in enumerate(internal_rows):
             fill = i % 2 == 0
             pdf.cell(82, 8, k, 1, 0, "C", fill)
             pdf.cell(108, 8, v, 1, 1, "R", fill)
@@ -634,7 +667,7 @@ st.markdown(
     """
 <div class="hero">
   <h1>V-GEN VPP 수익 계산기</h1>
-  <p>기존 수익과 VPP 참여 후 수익을 비교합니다. 고객용 화면은 사업주의 추가수익 중심으로 표시하고, 내부 수익 배분은 비밀번호 입력 후 내부용에서만 표시됩니다.</p>
+  <p>기존 수익과 VPP 참여 후 수익을 비교합니다. 고객용 화면은 사업주의 추가수익 중심으로 표시하고, 내부용 화면에서는 브이젠 총수익과 채널 수수료를 상세히 확인합니다.</p>
 </div>
 """,
     unsafe_allow_html=True,
@@ -735,25 +768,66 @@ with st.expander("고객용 연차별 상세표 보기", expanded=False):
 
 # Internal-only sections
 if is_internal:
-    st.subheader("5. 내부용 수익 배분")
+    st.subheader("5. 내부용: 브이젠 총수익 상세")
     st.markdown(
         f"""
 <div class="blue-box">
   <b>내부 배분 기준:</b> <span class="badge badge-blue">CP 브이젠 귀속</span> <span class="badge badge-orange">IMB/IMBP 브이젠 부담</span> <span class="badge badge-green">MEP/MAP/MWP 사업주 귀속</span><br>
-  채널영업 수수료는 브이젠 수익의 <b>{channel_rate_pct}%</b>로 계산했습니다. 1년차 기준 채널 수수료는 <b>{fmt_manwon(channel_fee_y1)}</b>입니다.
+  채널영업 수수료는 브이젠 채널 차감 전 수익의 <b>{channel_rate_pct}%</b>로 계산합니다.
 </div>
 """,
         unsafe_allow_html=True,
     )
 
-    i1, i2, i3 = st.columns(3)
+    i1, i2, i3, i4 = st.columns(4)
     with i1:
-        st.markdown(f"""<div class="card"><div class="label">브이젠 연간 순수익</div><div class="big">{fmt_manwon(vgen_net_y1)}</div><div class="small">CP + IMB 부담 - 채널수수료 + 선택수수료</div></div>""", unsafe_allow_html=True)
+        st.markdown(f"""<div class="card"><div class="label">브이젠 CP 총수익</div><div class="big">{fmt_manwon(vgen_cp_gross_y1)}</div><div class="small">CP 전체 브이젠 귀속</div></div>""", unsafe_allow_html=True)
     with i2:
-        st.markdown(f"""<div class="card"><div class="label">채널영업 연간 수수료</div><div class="big">{fmt_manwon(channel_fee_y1)}</div><div class="small">브이젠 수익의 {channel_rate_pct}%</div></div>""", unsafe_allow_html=True)
+        st.markdown(f"""<div class="card"><div class="label">브이젠 IMB 부담</div><div class="red">{fmt_manwon(vgen_imb_cost_y1)}</div><div class="small">IMB/IMBP 브이젠 부담</div></div>""", unsafe_allow_html=True)
     with i3:
-        st.markdown(f"""<div class="card"><div class="label">{years}년 누적 브이젠 수익</div><div class="big">{fmt_manwon(sum_vgen)}</div><div class="small">채널수수료 차감 후 기준</div></div>""", unsafe_allow_html=True)
+        st.markdown(f"""<div class="card"><div class="label">채널 차감 전 브이젠 수익</div><div class="big">{fmt_manwon(vgen_before_channel_y1)}</div><div class="small">CP + IMB 부담 반영</div></div>""", unsafe_allow_html=True)
+    with i4:
+        st.markdown(f"""<div class="card"><div class="label">브이젠 최종 순수익</div><div class="big">{fmt_manwon(vgen_net_y1)}</div><div class="small">채널수수료 차감 후</div></div>""", unsafe_allow_html=True)
 
+    j1, j2, j3, j4 = st.columns(4)
+    with j1:
+        st.markdown(f"""<div class="card"><div class="label">채널영업 연간 수수료</div><div class="big">{fmt_manwon(channel_fee_y1)}</div><div class="small">브이젠 수익의 {channel_rate_pct}%</div></div>""", unsafe_allow_html=True)
+    with j2:
+        st.markdown(f"""<div class="card"><div class="label">사업주 수수료</div><div class="big">{fmt_manwon(owner_service_fee_y1)}</div><div class="small">선택 입력값 기준</div></div>""", unsafe_allow_html=True)
+    with j3:
+        st.markdown(f"""<div class="card"><div class="label">{years}년 누적 브이젠 순수익</div><div class="big">{fmt_manwon(sum_vgen)}</div><div class="small">채널수수료 차감 후</div></div>""", unsafe_allow_html=True)
+    with j4:
+        st.markdown(f"""<div class="card"><div class="label">{years}년 누적 채널 수수료</div><div class="big">{fmt_manwon(sum_channel)}</div><div class="small">채널 파트너 지급액</div></div>""", unsafe_allow_html=True)
+
+    st.subheader("6. 내부용: 브이젠 수익 브릿지")
+    bridge_df = pd.DataFrame({
+        "항목": ["CP 총수익", "IMB/IMBP 부담", "채널 차감 전 수익", "채널영업 수수료", "사업주 수수료", "브이젠 최종 순수익"],
+        "1년차(만원)": [
+            won_to_manwon(vgen_cp_gross_y1),
+            won_to_manwon(vgen_imb_cost_y1),
+            won_to_manwon(vgen_before_channel_y1),
+            won_to_manwon(channel_fee_y1),
+            won_to_manwon(owner_service_fee_y1),
+            won_to_manwon(vgen_net_y1),
+        ],
+        f"{years}년 누적(만원)": [
+            won_to_manwon(sum_vgen_cp_gross),
+            won_to_manwon(sum_vgen_imb_cost),
+            won_to_manwon(sum_vgen_before_channel),
+            won_to_manwon(sum_channel),
+            won_to_manwon(sum_owner_service_fee),
+            won_to_manwon(sum_vgen),
+        ],
+    })
+    st.dataframe(bridge_df.round(1), use_container_width=True, hide_index=True)
+
+    fig_bridge = go.Figure()
+    fig_bridge.add_trace(go.Bar(x=bridge_df["항목"], y=bridge_df["1년차(만원)"], name="1년차"))
+    fig_bridge.add_trace(go.Bar(x=bridge_df["항목"], y=bridge_df[f"{years}년 누적(만원)"], name=f"{years}년 누적"))
+    fig_bridge.update_layout(barmode="group", height=440, yaxis_title="만원", margin=dict(l=20, r=20, t=30, b=90), legend=dict(orientation="h", y=1.08, x=1, xanchor="right"))
+    st.plotly_chart(fig_bridge, use_container_width=True)
+
+    st.subheader("7. 내부용: 사업주 / 브이젠 / 채널 누적 비교")
     split_df = pd.DataFrame({
         "구분": ["사업주 VPP 추가수익", "브이젠 순수익", "채널영업 수수료"],
         "1년차(만원)": [won_to_manwon(owner_vpp_net_y1), won_to_manwon(vgen_net_y1), won_to_manwon(channel_fee_y1)],
@@ -766,7 +840,7 @@ if is_internal:
     st.plotly_chart(fig_split, use_container_width=True)
     st.dataframe(split_df.round(1), use_container_width=True, hide_index=True)
 
-    st.subheader("6. 내부용 CP/MEP/MAP/MWP/IMB 상세")
+    st.subheader("8. 내부용 CP/MEP/MAP/MWP/IMB 상세")
     item_df = pd.DataFrame({
         "항목": list(effect_y1["amounts"].keys()),
         "단가(원/kWh)": [effect_y1["units"][k] for k in effect_y1["amounts"].keys()],
@@ -791,7 +865,7 @@ if is_internal:
         st.markdown(f"""<div class="card"><div class="label">IMB 방어 효과</div><div class="big">{fmt_manwon(imb_defense_effect)}</div><div class="small">일반 운영 대비 현재 운영 수준의 IMB 차이입니다.</div></div>""", unsafe_allow_html=True)
         st.markdown(f"""<div class="card"><div class="label">출력제어·급전 대응 효과</div><div class="big">{fmt_manwon(curtail_dispatch_effect)}</div><div class="small">MAP + MWP 합계입니다.</div></div>""", unsafe_allow_html=True)
 
-    st.subheader("7. 용량별 빠른 비교")
+    st.subheader("9. 내부용 용량별 빠른 비교")
     capacity_list = [0.5, 1, 3, 5, 10, 50, 100]
     quick_rows = []
     for c in capacity_list:
@@ -799,13 +873,17 @@ if is_internal:
         old_q = gen_q * fixed_total_price
         effect_q = effect_func(gen_q)
         split_q = split_revenue(effect_q["amounts"], channel_rate)
-        owner_q = split_q["owner_vpp"] * (1 - owner_fee_rate)
-        vgen_q = split_q["vgen_after_channel"] + max(owner_q, 0) * owner_fee_rate
+        owner_gross_q = split_q["owner_vpp"]
+        owner_fee_q = owner_gross_q * owner_fee_rate if owner_gross_q > 0 else 0
+        owner_q = owner_gross_q - owner_fee_q
+        vgen_q = split_q["vgen_after_channel"] + owner_fee_q
         quick_rows.append({
             "용량(MW)": c,
             "기존 사업주 수익(만원/년)": won_to_manwon(old_q),
             "사업주 추가수익(만원/년)": won_to_manwon(owner_q),
-            "브이젠 수익(만원/년)": won_to_manwon(vgen_q),
+            "브이젠 CP 총수익(만원/년)": won_to_manwon(split_q["vgen_gross_before_imb"]),
+            "브이젠 IMB 부담(만원/년)": won_to_manwon(split_q["vgen_imb_cost"]),
+            "브이젠 순수익(만원/년)": won_to_manwon(vgen_q),
             "채널 수수료(만원/년)": won_to_manwon(split_q["channel_fee"]),
         })
     quick_df = pd.DataFrame(quick_rows)
@@ -844,6 +922,8 @@ lead_df = pd.DataFrame([{
 }])
 
 if is_internal:
+    lead_df["브이젠 CP 총수익(만원)"] = won_to_manwon(vgen_cp_gross_y1)
+    lead_df["브이젠 IMB 부담(만원)"] = won_to_manwon(vgen_imb_cost_y1)
     lead_df["브이젠 연간 순수익(만원)"] = won_to_manwon(vgen_net_y1)
     lead_df["채널 연간 수수료(만원)"] = won_to_manwon(channel_fee_y1)
 
@@ -851,10 +931,10 @@ col_d1, col_d2 = st.columns(2)
 with col_d1:
     st.download_button("상담 요약 CSV 다운로드", data=lead_df.to_csv(index=False).encode("utf-8-sig"), file_name="vgen_vpp_lead_summary.csv", mime="text/csv", use_container_width=True)
 with col_d2:
-    customer_cashflow_download = cashflow_df.copy()
+    download_df = cashflow_df.copy()
     if not is_internal:
-        customer_cashflow_download = customer_cashflow_download[["연차", "발전량(kWh)", "기존 사업주 총수익(원)", "사업주 VPP 순수익(원)", "사업주 참여 후 총수익(원)", "누적 사업주 추가수익(원)"]]
-    st.download_button("연차별 현금흐름 CSV 다운로드", data=customer_cashflow_download.to_csv(index=False).encode("utf-8-sig"), file_name="vgen_vpp_cashflow.csv", mime="text/csv", use_container_width=True)
+        download_df = download_df[["연차", "발전량(kWh)", "기존 사업주 총수익(원)", "사업주 VPP 순수익(원)", "사업주 참여 후 총수익(원)", "누적 사업주 추가수익(원)"]]
+    st.download_button("연차별 현금흐름 CSV 다운로드", data=download_df.to_csv(index=False).encode("utf-8-sig"), file_name="vgen_vpp_cashflow.csv", mime="text/csv", use_container_width=True)
 
 pdf_data = make_pdf()
 if pdf_data is None:
@@ -874,6 +954,7 @@ if is_internal:
 - **MAP (Make-whole Additional Payment, 출력제어 보상)**: 사업주 귀속으로 계산합니다.
 - **MWP (Make-whole Payment, 급전지시 비용보전)**: 사업주 귀속으로 계산합니다.
 - **IMB/IMBP (Imbalance Penalty, 예측오차 페널티)**: 브이젠 부담으로 계산합니다.
-- **채널영업 수수료**: 브이젠 수익에서 선택한 비율만큼 지급하는 것으로 계산합니다.
+- **채널영업 수수료**: 브이젠 채널 차감 전 수익에서 선택한 비율만큼 지급하는 것으로 계산합니다.
+- **브이젠 최종 순수익**: CP 총수익 + IMB 부담 - 채널영업 수수료 + 선택 입력한 사업주 수수료입니다.
             """
         )
