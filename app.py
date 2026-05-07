@@ -7,15 +7,18 @@ import streamlit as st
 from fpdf import FPDF
 
 # =========================================================
-# V-GEN VPP 수익 계산기 v3.2
+# V-GEN VPP 수익 계산기 v4.0
 # ---------------------------------------------------------
-# 고객용
-# - 기존 수익 vs VPP 참여 후 사업주 수익 중심
-# - 브이젠 수익, 채널 수수료, 내부 배분 구조 숨김
+# 화면 구분
+# 1) 고객용: 사업주 수익 상승 중심
+# 2) 영업채널용: 사업주 수익 + 채널 수수료 중심
+# 3) 내부용: 비밀번호 입력 후 브이젠 총수익/배분/채널 상세 표시
 #
-# 내부용
-# - 비밀번호 입력 후 접근, 기본 비밀번호: 1234
-# - 브이젠 총수익을 상세히 표시
+# 케이스 프리셋
+# - 제주 1MW, 제주 3MW, 육지 1MW, 육지 3MW, 육지 5MW
+# - 직접 입력 가능
+#
+# 배분 기본 정책
 # - CP: 브이젠 귀속
 # - IMB/IMBP: 브이젠 부담
 # - MEP/MAP/MWP: 사업주 귀속
@@ -23,7 +26,7 @@ from fpdf import FPDF
 # =========================================================
 
 st.set_page_config(
-    page_title="V-GEN VPP 수익 계산기 v3.2",
+    page_title="V-GEN VPP 수익 계산기 v4.0",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -34,18 +37,9 @@ INTERNAL_PASSWORD = "1234"
 DEFAULT_PROJECT_YEARS = 20
 
 # ---------------------------------------------------------
-# 기본 설정값
+# 기본 데이터
 # ---------------------------------------------------------
 REGION_CONFIG = {
-    "호남/육지 입찰제 확대 모델": {
-        "cp": 11.0,
-        "mep": 1.2,
-        "map": 0.8,
-        "mwp": 0.5,
-        "imb": -0.3,
-        "dasmp": 120.0,
-        "rtsmp": 122.0,
-    },
     "제주도 입찰제 안착 모델": {
         "cp": 22.0,
         "mep": 1.2,
@@ -54,6 +48,15 @@ REGION_CONFIG = {
         "imb": -0.8,
         "dasmp": 115.0,
         "rtsmp": 120.0,
+    },
+    "호남/육지 입찰제 확대 모델": {
+        "cp": 11.0,
+        "mep": 1.2,
+        "map": 0.8,
+        "mwp": 0.5,
+        "imb": -0.3,
+        "dasmp": 120.0,
+        "rtsmp": 122.0,
     },
 }
 
@@ -78,12 +81,67 @@ CHANNEL_PRESETS = {
 }
 
 CALC_METHODS = ["간편 수익비교", "정산규칙 근사"]
+ROLE_MODES = ["고객용", "영업채널용", "내부용"]
 TERM_LABELS = {
     "cp": "CP (Capacity Payment, 용량보상)",
     "mep": "MEP (Market Energy Payment, 전력거래정산)",
     "map": "MAP (Make-whole Additional Payment, 출력제어 보상)",
     "mwp": "MWP (Make-whole Payment, 급전지시 비용보전)",
     "imb": "IMB/IMBP (Imbalance Penalty, 예측오차 페널티)",
+}
+
+CASE_PRESETS = {
+    "제주 1MW": {
+        "region": "제주도 입찰제 안착 모델",
+        "cap_mw": 1.0,
+        "gen_time": 3.6,
+        "fixed_total_price": 180.0,
+        "base_smp_price": 120.0,
+        "scenario": "기준",
+        "operation": "브이젠 고도화 운영",
+        "channel_preset": "채널 없음",
+    },
+    "제주 3MW": {
+        "region": "제주도 입찰제 안착 모델",
+        "cap_mw": 3.0,
+        "gen_time": 3.6,
+        "fixed_total_price": 180.0,
+        "base_smp_price": 120.0,
+        "scenario": "기준",
+        "operation": "브이젠 고도화 운영",
+        "channel_preset": "채널 없음",
+    },
+    "육지 1MW": {
+        "region": "호남/육지 입찰제 확대 모델",
+        "cap_mw": 1.0,
+        "gen_time": 3.6,
+        "fixed_total_price": 180.0,
+        "base_smp_price": 120.0,
+        "scenario": "기준",
+        "operation": "브이젠 고도화 운영",
+        "channel_preset": "채널 없음",
+    },
+    "육지 3MW": {
+        "region": "호남/육지 입찰제 확대 모델",
+        "cap_mw": 3.0,
+        "gen_time": 3.6,
+        "fixed_total_price": 180.0,
+        "base_smp_price": 120.0,
+        "scenario": "기준",
+        "operation": "브이젠 고도화 운영",
+        "channel_preset": "채널 없음",
+    },
+    "육지 5MW": {
+        "region": "호남/육지 입찰제 확대 모델",
+        "cap_mw": 5.0,
+        "gen_time": 3.6,
+        "fixed_total_price": 180.0,
+        "base_smp_price": 120.0,
+        "scenario": "기준",
+        "operation": "브이젠 고도화 운영",
+        "channel_preset": "5MW 모집 채널: 브이젠 수익의 20%",
+    },
+    "직접 입력": {},
 }
 
 # ---------------------------------------------------------
@@ -181,6 +239,49 @@ def get_grade(score: int) -> tuple[str, str]:
         return "추가 확인 필요", "badge-orange"
     return "사전 조건 보완 필요", "badge-orange"
 
+
+def init_defaults():
+    defaults = {
+        "role_mode": "고객용",
+        "selected_case": "제주 1MW",
+        "region": "제주도 입찰제 안착 모델",
+        "calc_method": "간편 수익비교",
+        "scenario": "기준",
+        "cap_mw": 1.0,
+        "gen_time": 3.6,
+        "degradation_pct": 0.5,
+        "years": DEFAULT_PROJECT_YEARS,
+        "fixed_total_price": 180.0,
+        "base_smp_price": 120.0,
+        "operation": "브이젠 고도화 운영",
+        "channel_preset": "채널 없음",
+        "custom_channel_rate_pct": 20,
+        "owner_fee_pct": 0,
+        "initial_cost": 0,
+        "om_year1": 0,
+        "om_escalation_pct": 0.0,
+        "has_kpx_meter": "있음",
+        "has_control_inv": "있음",
+        "has_remote_comm": "가능",
+        "site_location_checked": "확인",
+        "customer_name": "",
+    }
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+
+
+def apply_case(case_name: str):
+    preset = CASE_PRESETS.get(case_name, {})
+    if not preset:
+        st.session_state["selected_case"] = "직접 입력"
+        return
+    st.session_state["selected_case"] = case_name
+    for key, value in preset.items():
+        st.session_state[key] = value
+    st.session_state["degradation_pct"] = st.session_state.get("degradation_pct", 0.5)
+    st.session_state["years"] = st.session_state.get("years", DEFAULT_PROJECT_YEARS)
+
 # ---------------------------------------------------------
 # Calculation functions
 # ---------------------------------------------------------
@@ -274,10 +375,6 @@ def split_revenue(amounts: dict, channel_rate: float) -> dict:
     mwp = amounts.get(TERM_LABELS["mwp"], 0.0)
     imb = amounts.get(TERM_LABELS["imb"], 0.0)
 
-    # 배분 정책
-    # CP: 브이젠 귀속
-    # IMB/IMBP: 브이젠 부담
-    # MEP/MAP/MWP: 사업주 귀속
     owner_vpp = mep + map_value + mwp
     vgen_gross_before_imb = cp
     vgen_imb_cost = imb
@@ -347,7 +444,6 @@ def calc_cashflow(
 
         om = om_year1 * ((1 + om_escalation) ** (year - 1))
         owner_after_total = old_total + owner_vpp_net - om
-
         vgen_total_net = split["vgen_after_channel"] + owner_service_fee
 
         cum_owner_old += old_total
@@ -391,64 +487,83 @@ def calc_cashflow(
     return pd.DataFrame(rows)
 
 # ---------------------------------------------------------
-# Sidebar inputs
+# State + Sidebar
 # ---------------------------------------------------------
+init_defaults()
+
 with st.sidebar:
-    st.header("1. 화면 설정")
-    requested_view = st.radio("화면", ["고객용", "내부용"], index=0, horizontal=True)
+    st.header("1. 보기 모드")
+    role_mode = st.radio("사용 목적", ROLE_MODES, key="role_mode", horizontal=False)
     internal_authenticated = False
-    if requested_view == "내부용":
+    if role_mode == "내부용":
         password = st.text_input("내부용 비밀번호", type="password", placeholder="비밀번호 입력")
         if password == INTERNAL_PASSWORD:
             internal_authenticated = True
             st.success("내부용 화면이 활성화되었습니다.")
         elif password:
             st.error("비밀번호가 맞지 않습니다. 고객용 화면으로 표시됩니다.")
-    is_internal = requested_view == "내부용" and internal_authenticated
+    is_internal = role_mode == "내부용" and internal_authenticated
+    is_channel = role_mode == "영업채널용"
+    effective_role = "내부용" if is_internal else "영업채널용" if is_channel else "고객용"
 
-    st.header("2. 기본 설정")
-    region = st.selectbox("지역", list(REGION_CONFIG.keys()))
-    conf = REGION_CONFIG[region]
-    calc_method = st.radio("계산 방식", CALC_METHODS, index=0)
-    scenario = st.selectbox("수익 시나리오", list(SCENARIOS.keys()), index=1)
+    st.header("2. 빠른 케이스")
+    case_name = st.selectbox("케이스 선택", list(CASE_PRESETS.keys()), key="selected_case")
+    if st.button("케이스 적용", use_container_width=True):
+        apply_case(case_name)
+        st.rerun()
 
-    st.header("3. 발전소 정보")
-    cap_mw = st.number_input("설비 용량(MW)", min_value=0.01, value=1.0, step=0.1)
-    gen_time = st.slider("하루 평균 발전시간", 2.0, 5.5, 3.6, 0.1)
-    degradation_pct = st.number_input("연간 발전효율 감소율(%)", min_value=0.0, max_value=3.0, value=0.5, step=0.1)
-    years = st.slider("분석 기간(년)", 1, 30, DEFAULT_PROJECT_YEARS)
+    st.caption("케이스 적용 후에도 아래 상세 입력에서 값을 직접 수정할 수 있습니다.")
 
-    st.header("4. 기존 판매단가")
-    fixed_total_price = st.number_input("기존 총 판매단가(SMP+REC, 원/kWh)", min_value=0.0, value=180.0, step=1.0)
-    base_smp_price = st.number_input("기존 SMP 상당 단가(원/kWh)", min_value=0.0, value=120.0, step=1.0)
-    rec_price = max(fixed_total_price - base_smp_price, 0.0)
-    if fixed_total_price < base_smp_price:
-        st.warning("SMP 상당 단가가 총 판매단가보다 큽니다. REC 상당 단가는 0원/kWh로 계산합니다.")
-    st.caption(f"REC 상당 단가 자동 계산: {rec_price:,.1f} 원/kWh")
+    with st.expander("기본 설정", expanded=True):
+        region = st.selectbox("지역", list(REGION_CONFIG.keys()), key="region")
+        conf = REGION_CONFIG[region]
+        calc_method = st.radio("계산 방식", CALC_METHODS, key="calc_method")
+        scenario = st.selectbox("수익 시나리오", list(SCENARIOS.keys()), key="scenario")
+        years = st.slider("분석 기간(년)", 1, 30, key="years")
 
-    st.header("5. VPP 정산항목")
-    cp_unit = st.number_input("CP (Capacity Payment, 용량보상, 원/kWh)", value=float(apply_scenario(conf["cp"], "cp", scenario)), step=0.1)
-    mep_unit = st.number_input("MEP (Market Energy Payment, 전력거래정산, 원/kWh)", value=float(apply_scenario(conf["mep"], "mep", scenario)), step=0.1)
-    map_unit = st.number_input("MAP (Make-whole Additional Payment, 출력제어 보상, 원/kWh)", value=float(apply_scenario(conf["map"], "map", scenario)), step=0.1)
-    mwp_unit = st.number_input("MWP (Make-whole Payment, 급전지시 비용보전, 원/kWh)", value=float(apply_scenario(conf["mwp"], "mwp", scenario)), step=0.1)
-    imb_unit = st.number_input("IMB/IMBP (Imbalance Penalty, 예측오차 페널티, 원/kWh)", value=float(apply_scenario(conf["imb"], "imb", scenario)), step=0.1)
+    with st.expander("발전소 정보", expanded=True):
+        cap_mw = st.number_input("설비 용량(MW)", min_value=0.01, step=0.1, key="cap_mw")
+        gen_time = st.slider("하루 평균 발전시간", 2.0, 5.5, 0.1, key="gen_time")
+        degradation_pct = st.number_input("연간 발전효율 감소율(%)", min_value=0.0, max_value=3.0, step=0.1, key="degradation_pct")
 
-    st.header("6. VPP 운영 수준")
-    operation = st.radio("운영 수준", list(OPERATION_LEVELS.keys()), index=2)
-    op = OPERATION_LEVELS[operation]
-    st.caption(op["desc"])
+    with st.expander("기존 판매단가", expanded=True):
+        fixed_total_price = st.number_input("기존 총 판매단가(SMP+REC, 원/kWh)", min_value=0.0, step=1.0, key="fixed_total_price")
+        base_smp_price = st.number_input("기존 SMP 상당 단가(원/kWh)", min_value=0.0, step=1.0, key="base_smp_price")
+        rec_price = max(fixed_total_price - base_smp_price, 0.0)
+        if fixed_total_price < base_smp_price:
+            st.warning("SMP 상당 단가가 총 판매단가보다 큽니다. REC 상당 단가는 0원/kWh로 계산합니다.")
+        st.caption(f"REC 상당 단가 자동 계산: {rec_price:,.1f} 원/kWh")
 
-    if is_internal:
-        st.header("7. 내부 수익 배분")
-        channel_preset = st.selectbox("채널영업 수수료율", list(CHANNEL_PRESETS.keys()), index=1)
-        if CHANNEL_PRESETS[channel_preset] is None:
-            channel_rate_pct = st.slider("직접 입력 수수료율(%)", 0, 80, 20)
-        else:
-            channel_rate_pct = CHANNEL_PRESETS[channel_preset]
-        owner_fee_pct = st.slider("사업주 VPP 수익 수수료율(선택, %)", 0, 50, 0)
-        initial_cost = st.number_input("구축비 차감액(원, 선택 입력)", min_value=0, value=0, step=100_000)
-        om_year1 = st.number_input("연간 O&M/통신/관리비(원, 선택 입력)", min_value=0, value=0, step=100_000)
-        om_escalation_pct = st.number_input("O&M 상승률(%/년)", min_value=0.0, max_value=10.0, value=0.0, step=0.1)
+    with st.expander("VPP 정산항목", expanded=False):
+        cp_unit = st.number_input("CP (Capacity Payment, 용량보상, 원/kWh)", value=float(apply_scenario(conf["cp"], "cp", scenario)), step=0.1)
+        mep_unit = st.number_input("MEP (Market Energy Payment, 전력거래정산, 원/kWh)", value=float(apply_scenario(conf["mep"], "mep", scenario)), step=0.1)
+        map_unit = st.number_input("MAP (Make-whole Additional Payment, 출력제어 보상, 원/kWh)", value=float(apply_scenario(conf["map"], "map", scenario)), step=0.1)
+        mwp_unit = st.number_input("MWP (Make-whole Payment, 급전지시 비용보전, 원/kWh)", value=float(apply_scenario(conf["mwp"], "mwp", scenario)), step=0.1)
+        imb_unit = st.number_input("IMB/IMBP (Imbalance Penalty, 예측오차 페널티, 원/kWh)", value=float(apply_scenario(conf["imb"], "imb", scenario)), step=0.1)
+
+    with st.expander("운영 수준", expanded=False):
+        operation = st.radio("VPP 운영 수준", list(OPERATION_LEVELS.keys()), key="operation")
+        op = OPERATION_LEVELS[operation]
+        st.caption(op["desc"])
+
+    if is_internal or is_channel:
+        with st.expander("채널/배분 설정", expanded=is_internal):
+            channel_preset = st.selectbox("채널영업 수수료율", list(CHANNEL_PRESETS.keys()), key="channel_preset")
+            if CHANNEL_PRESETS[channel_preset] is None:
+                channel_rate_pct = st.slider("직접 입력 수수료율(%)", 0, 80, key="custom_channel_rate_pct")
+            else:
+                channel_rate_pct = CHANNEL_PRESETS[channel_preset]
+            st.caption(f"채널 수수료율: 브이젠 수익의 {channel_rate_pct}%")
+            if is_internal:
+                owner_fee_pct = st.slider("사업주 VPP 수익 수수료율(선택, %)", 0, 50, key="owner_fee_pct")
+                initial_cost = st.number_input("구축비 차감액(원, 선택 입력)", min_value=0, step=100_000, key="initial_cost")
+                om_year1 = st.number_input("연간 O&M/통신/관리비(원, 선택 입력)", min_value=0, step=100_000, key="om_year1")
+                om_escalation_pct = st.number_input("O&M 상승률(%/년)", min_value=0.0, max_value=10.0, step=0.1, key="om_escalation_pct")
+            else:
+                owner_fee_pct = 0
+                initial_cost = 0
+                om_year1 = 0
+                om_escalation_pct = 0.0
     else:
         channel_rate_pct = 0
         owner_fee_pct = 0
@@ -456,27 +571,27 @@ with st.sidebar:
         om_year1 = 0
         om_escalation_pct = 0.0
 
-    st.header("8. 참여 가능성 체크")
-    has_kpx_meter = st.selectbox("KPX 계량기", ["있음", "없음", "모름"], index=0)
-    has_control_inv = st.selectbox("제어 가능 인버터", ["있음", "없음", "모름"], index=0)
-    has_remote_comm = st.selectbox("원격 통신 가능", ["가능", "불가", "모름"], index=0)
-    site_location_checked = st.selectbox("발전소 위치/계통 확인", ["확인", "미확인", "모름"], index=0)
-    customer_name = st.text_input("고객명/발전소명(선택)", value="")
+    with st.expander("참여 가능성 체크", expanded=False):
+        has_kpx_meter = st.selectbox("KPX 계량기", ["있음", "없음", "모름"], key="has_kpx_meter")
+        has_control_inv = st.selectbox("제어 가능 인버터", ["있음", "없음", "모름"], key="has_control_inv")
+        has_remote_comm = st.selectbox("원격 통신 가능", ["가능", "불가", "모름"], key="has_remote_comm")
+        site_location_checked = st.selectbox("발전소 위치/계통 확인", ["확인", "미확인", "모름"], key="site_location_checked")
+        customer_name = st.text_input("고객명/발전소명(선택)", key="customer_name")
 
     if calc_method == "정산규칙 근사":
-        st.header("9. 정산규칙 근사 입력")
-        dasmp = st.number_input("DASMP (하루전 전력가격, 원/kWh)", value=float(conf["dasmp"]), step=1.0)
-        rtsmp = st.number_input("RTSMP (실시간 전력가격, 원/kWh)", value=float(conf["rtsmp"]), step=1.0)
-        da_ratio = st.slider("DAOS (하루전 발전계획량 비율)", 0.0, 1.5, 0.95, 0.01)
-        rt_ratio = st.slider("RTOS (실시간 발전계획량 비율)", 0.0, 1.5, 0.93, 0.01)
-        actual_ratio = st.slider("MGO (실제 발전량 비율)", 0.0, 1.5, 1.00, 0.01)
-        ess_ratio = st.slider("MPE (ESS 충전량 비율)", 0.0, 0.5, 0.00, 0.01)
-        available_ratio = st.slider("RA (공급가능량 비율)", 0.0, 1.5, 0.95, 0.01)
-        recognized_ratio = st.slider("ELCC/RPCF (용량 인정비율)", 0.0, 1.5, 0.75, 0.01)
-        map_spread = st.number_input("MAP 추가 보상단가(원/kWh)", value=0.0, step=0.1)
-        mwp_spread = st.number_input("MWP 보전단가(원/kWh)", value=max(mwp_unit, 0.0), step=0.1)
-        tolerance_pct = st.number_input("IMB 허용오차율(%)", min_value=0.0, max_value=30.0, value=8.0, step=0.5)
-        penalty_factor = st.number_input("IMPF (IMB 페널티 계수)", min_value=0.0, value=1.0, step=0.1)
+        with st.expander("정산규칙 근사 입력", expanded=False):
+            dasmp = st.number_input("DASMP (하루전 전력가격, 원/kWh)", value=float(conf["dasmp"]), step=1.0)
+            rtsmp = st.number_input("RTSMP (실시간 전력가격, 원/kWh)", value=float(conf["rtsmp"]), step=1.0)
+            da_ratio = st.slider("DAOS (하루전 발전계획량 비율)", 0.0, 1.5, 0.95, 0.01)
+            rt_ratio = st.slider("RTOS (실시간 발전계획량 비율)", 0.0, 1.5, 0.93, 0.01)
+            actual_ratio = st.slider("MGO (실제 발전량 비율)", 0.0, 1.5, 1.00, 0.01)
+            ess_ratio = st.slider("MPE (ESS 충전량 비율)", 0.0, 0.5, 0.00, 0.01)
+            available_ratio = st.slider("RA (공급가능량 비율)", 0.0, 1.5, 0.95, 0.01)
+            recognized_ratio = st.slider("ELCC/RPCF (용량 인정비율)", 0.0, 1.5, 0.75, 0.01)
+            map_spread = st.number_input("MAP 추가 보상단가(원/kWh)", value=0.0, step=0.1)
+            mwp_spread = st.number_input("MWP 보전단가(원/kWh)", value=max(mwp_unit, 0.0), step=0.1)
+            tolerance_pct = st.number_input("IMB 허용오차율(%)", min_value=0.0, max_value=30.0, value=8.0, step=0.5)
+            penalty_factor = st.number_input("IMPF (IMB 페널티 계수)", min_value=0.0, value=1.0, step=0.1)
     else:
         dasmp = conf["dasmp"]
         rtsmp = conf["rtsmp"]
@@ -572,12 +687,12 @@ cashflow_df = calc_cashflow(
 sum_old = cashflow_df["기존 사업주 총수익(원)"].sum()
 sum_owner_after = cashflow_df["사업주 참여 후 총수익(원)"].sum()
 sum_owner_gain = cashflow_df["사업주 VPP 순수익(원)"].sum()
-sum_vgen_cp_gross = cashflow_df["브이젠 CP 총수익(원)"].sum()
-sum_vgen_imb_cost = cashflow_df["브이젠 IMB 부담(원)"].sum()
-sum_vgen_before_channel = cashflow_df["브이젠 채널 차감 전 수익(원)"].sum()
-sum_vgen = cashflow_df["브이젠 순수익(원)"].sum()
-sum_channel = cashflow_df["채널영업 수수료(원)"].sum()
-sum_owner_service_fee = cashflow_df["사업주 수수료(원)"].sum()
+sum_vgen_cp_gross = cashflow_df["누적 브이젠 CP 총수익(원)"].iloc[-1]
+sum_vgen_imb_cost = cashflow_df["누적 브이젠 IMB 부담(원)"].iloc[-1]
+sum_vgen_before_channel = cashflow_df["누적 브이젠 채널 차감 전 수익(원)"].iloc[-1]
+sum_vgen = cashflow_df["누적 브이젠 순수익(원)"].iloc[-1]
+sum_channel = cashflow_df["누적 채널 수수료(원)"].iloc[-1]
+sum_owner_service_fee = cashflow_df["누적 사업주 수수료(원)"].iloc[-1]
 
 score = 0
 score += 30 if has_kpx_meter == "있음" else 10 if has_kpx_meter == "모름" else 0
@@ -648,7 +763,7 @@ def make_pdf() -> bytes | None:
 
     pdf.ln(6)
     pdf.set_font("NanumGothic", size=14)
-    pdf.cell(190, 9, "2. 참여 가능성", "B", ln=True)
+    pdf.cell(190, 9, "참여 가능성", "B", ln=True)
     pdf.ln(4)
     pdf.set_font("NanumGothic", size=9)
     pdf.multi_cell(190, 6, f"참여 가능성: {grade} / 점수: {score}점")
@@ -667,14 +782,23 @@ st.markdown(
     """
 <div class="hero">
   <h1>V-GEN VPP 수익 계산기</h1>
-  <p>기존 수익과 VPP 참여 후 수익을 비교합니다. 고객용 화면은 사업주의 추가수익 중심으로 표시하고, 내부용 화면에서는 브이젠 총수익과 채널 수수료를 상세히 확인합니다.</p>
+  <p>고객용·영업채널용·내부용을 구분하고, 제주/육지 주요 케이스를 빠르게 불러와 수익을 비교합니다.</p>
 </div>
 """,
     unsafe_allow_html=True,
 )
 
-if requested_view == "내부용" and not internal_authenticated:
+if role_mode == "내부용" and not internal_authenticated:
     st.warning("내부용 화면은 비밀번호 입력 후 확인할 수 있습니다. 현재는 고객용 화면으로 표시됩니다.")
+
+st.markdown(
+    f"""
+<div class="blue-box">
+  <b>현재 보기:</b> {effective_role} &nbsp; | &nbsp; <b>선택 케이스:</b> {st.session_state.get('selected_case', '직접 입력')} &nbsp; | &nbsp; <b>지역:</b> {region} &nbsp; | &nbsp; <b>용량:</b> {cap_mw:,.1f}MW
+</div>
+""",
+    unsafe_allow_html=True,
+)
 
 # Customer top cards
 c1, c2, c3 = st.columns(3)
@@ -688,12 +812,22 @@ with c3:
 st.markdown(
     f"""
 <div class="green-box">
-  <b>핵심 결과:</b> 현재 입력값 기준 VPP 참여 시 사업주는 1년차 기준 <b>{fmt_manwon(owner_vpp_net_y1)}</b>의 추가수익을 기대할 수 있습니다. 
-  기존 SMP/REC 수익은 유지하고, MEP/MAP/MWP 정산효과가 추가되는 구조입니다.
+  <b>핵심 결과:</b> 현재 입력값 기준 VPP 참여 시 사업주는 1년차 기준 <b>{fmt_manwon(owner_vpp_net_y1)}</b>의 추가수익을 기대할 수 있습니다. 기존 SMP/REC 수익은 유지하고, MEP/MAP/MWP 정산효과가 추가되는 구조입니다.
 </div>
 """,
     unsafe_allow_html=True,
 )
+
+# Channel summary for channel mode only
+if is_channel:
+    st.subheader("영업채널용 요약")
+    ch1, ch2, ch3 = st.columns(3)
+    with ch1:
+        st.markdown(f"""<div class="card"><div class="label">채널영업 연간 수수료</div><div class="big">{fmt_manwon(channel_fee_y1)}</div><div class="small">브이젠 수익의 {channel_rate_pct}% 기준</div></div>""", unsafe_allow_html=True)
+    with ch2:
+        st.markdown(f"""<div class="card"><div class="label">{years}년 누적 채널 수수료</div><div class="big">{fmt_manwon(sum_channel)}</div><div class="small">선택 케이스 기준</div></div>""", unsafe_allow_html=True)
+    with ch3:
+        st.markdown(f"""<div class="card"><div class="label">모집 용량</div><div class="big">{cap_mw:,.1f} MW</div><div class="small">{channel_preset}</div></div>""", unsafe_allow_html=True)
 
 # Customer comparison chart
 st.subheader("1. 기존 vs VPP 참여 후 사업주 수익")
@@ -733,7 +867,7 @@ fig_line.add_trace(go.Scatter(x=cashflow_df["연차"], y=cashflow_df["누적 사
 fig_line.update_layout(height=430, yaxis_title="만원", xaxis_title="연차", margin=dict(l=20, r=20, t=30, b=40), legend=dict(orientation="h", y=1.08, x=1, xanchor="right"))
 st.plotly_chart(fig_line, use_container_width=True)
 
-# Participation checklist visible to customer
+# Participation checklist visible to all roles
 st.subheader("4. 참여 가능성 진단")
 check_cols = st.columns([1, 2])
 with check_cols[0]:
@@ -754,17 +888,22 @@ with check_cols[1]:
     for action in next_actions:
         st.write(f"- {action}")
 
-with st.expander("고객용 연차별 상세표 보기", expanded=False):
-    customer_df = cashflow_df[["연차", "발전량(kWh)", "기존 사업주 총수익(원)", "사업주 VPP 순수익(원)", "사업주 참여 후 총수익(원)", "누적 사업주 추가수익(원)"]].copy()
-    for col in list(customer_df.columns):
+with st.expander("연차별 상세표 보기", expanded=False):
+    if is_internal:
+        table_df = cashflow_df.copy()
+    elif is_channel:
+        table_df = cashflow_df[["연차", "발전량(kWh)", "기존 사업주 총수익(원)", "사업주 VPP 순수익(원)", "사업주 참여 후 총수익(원)", "채널영업 수수료(원)", "누적 채널 수수료(원)"]].copy()
+    else:
+        table_df = cashflow_df[["연차", "발전량(kWh)", "기존 사업주 총수익(원)", "사업주 VPP 순수익(원)", "사업주 참여 후 총수익(원)", "누적 사업주 추가수익(원)"]].copy()
+    for col in list(table_df.columns):
         if col.endswith("(원)"):
-            customer_df[col.replace("(원)", "(만원)")] = customer_df[col].apply(won_to_manwon)
-            customer_df.drop(columns=[col], inplace=True)
-    customer_df["발전량(kWh)"] = customer_df["발전량(kWh)"].round(0)
-    for col in customer_df.columns:
+            table_df[col.replace("(원)", "(만원)")] = table_df[col].apply(won_to_manwon)
+            table_df.drop(columns=[col], inplace=True)
+    table_df["발전량(kWh)"] = table_df["발전량(kWh)"].round(0)
+    for col in table_df.columns:
         if col.endswith("(만원)"):
-            customer_df[col] = customer_df[col].round(1)
-    st.dataframe(customer_df, use_container_width=True, hide_index=True)
+            table_df[col] = table_df[col].round(1)
+    st.dataframe(table_df, use_container_width=True, hide_index=True)
 
 # Internal-only sections
 if is_internal:
@@ -838,7 +977,6 @@ if is_internal:
     fig_split.add_trace(go.Bar(x=split_df["구분"], y=split_df[f"{years}년 누적(만원)"], name=f"{years}년 누적"))
     fig_split.update_layout(barmode="group", height=430, yaxis_title="만원", margin=dict(l=20, r=20, t=30, b=60), legend=dict(orientation="h", y=1.08, x=1, xanchor="right"))
     st.plotly_chart(fig_split, use_container_width=True)
-    st.dataframe(split_df.round(1), use_container_width=True, hide_index=True)
 
     st.subheader("8. 내부용 CP/MEP/MAP/MWP/IMB 상세")
     item_df = pd.DataFrame({
@@ -889,18 +1027,6 @@ if is_internal:
     quick_df = pd.DataFrame(quick_rows)
     st.dataframe(quick_df.round(1), use_container_width=True, hide_index=True)
 
-    with st.expander("내부용 연차별 상세표 보기", expanded=False):
-        internal_df = cashflow_df.copy()
-        for col in list(internal_df.columns):
-            if col.endswith("(원)"):
-                internal_df[col.replace("(원)", "(만원)")] = internal_df[col].apply(won_to_manwon)
-                internal_df.drop(columns=[col], inplace=True)
-        internal_df["발전량(kWh)"] = internal_df["발전량(kWh)"].round(0)
-        for col in internal_df.columns:
-            if col.endswith("(만원)"):
-                internal_df[col] = internal_df[col].round(1)
-        st.dataframe(internal_df, use_container_width=True, hide_index=True)
-
     if effect_y1["detail"]:
         with st.expander("정산규칙 근사 상세값", expanded=False):
             detail_df = pd.DataFrame({"항목": list(effect_y1["detail"].keys()), "값": list(effect_y1["detail"].values())})
@@ -910,6 +1036,8 @@ if is_internal:
 st.subheader("보고서 다운로드")
 lead_df = pd.DataFrame([{
     "생성일": datetime.now().strftime("%Y-%m-%d %H:%M"),
+    "보기 모드": effective_role,
+    "선택 케이스": st.session_state.get("selected_case", "직접 입력"),
     "고객명/발전소명": customer_name,
     "지역": region,
     "설비용량(MW)": cap_mw,
@@ -921,11 +1049,12 @@ lead_df = pd.DataFrame([{
     "점수": score,
 }])
 
+if is_channel or is_internal:
+    lead_df["채널 연간 수수료(만원)"] = won_to_manwon(channel_fee_y1)
 if is_internal:
     lead_df["브이젠 CP 총수익(만원)"] = won_to_manwon(vgen_cp_gross_y1)
     lead_df["브이젠 IMB 부담(만원)"] = won_to_manwon(vgen_imb_cost_y1)
     lead_df["브이젠 연간 순수익(만원)"] = won_to_manwon(vgen_net_y1)
-    lead_df["채널 연간 수수료(만원)"] = won_to_manwon(channel_fee_y1)
 
 col_d1, col_d2 = st.columns(2)
 with col_d1:
@@ -933,7 +1062,10 @@ with col_d1:
 with col_d2:
     download_df = cashflow_df.copy()
     if not is_internal:
-        download_df = download_df[["연차", "발전량(kWh)", "기존 사업주 총수익(원)", "사업주 VPP 순수익(원)", "사업주 참여 후 총수익(원)", "누적 사업주 추가수익(원)"]]
+        cols = ["연차", "발전량(kWh)", "기존 사업주 총수익(원)", "사업주 VPP 순수익(원)", "사업주 참여 후 총수익(원)", "누적 사업주 추가수익(원)"]
+        if is_channel:
+            cols += ["채널영업 수수료(원)", "누적 채널 수수료(원)"]
+        download_df = download_df[cols]
     st.download_button("연차별 현금흐름 CSV 다운로드", data=download_df.to_csv(index=False).encode("utf-8-sig"), file_name="vgen_vpp_cashflow.csv", mime="text/csv", use_container_width=True)
 
 pdf_data = make_pdf()
